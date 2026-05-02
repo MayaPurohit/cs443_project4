@@ -37,7 +37,11 @@ class CharLevelDataset:
 
         TODO: Set instance variable for the constructor parameters.
         '''
-
+        self.file_path = file_path
+        self.start_char = start_char
+        self.pad_char = pad_char
+        self.end_char = end_char
+        self.verbose = verbose
         # KEEP THE FOLLOWING PLACEHOLDERS, THESE ALL SHOULD BE SET BY THE process METHOD
         self.corpus = None  # Corpus organized as: list of strs, which each str is an entire movie review
         self.vocab = None  # Unique chars in the corpus
@@ -192,8 +196,9 @@ class CharLevelDataset:
         TODO: Add the end, start, and pad tokens to the vocab.
         '''
         # Corpus is list of strs (each str is review)
+        new_vocab = [self.pad_char, self.start_char, self.end_char]
         vocab = sorted(list(set(''.join(corpus))))
-
+        vocab = new_vocab + vocab
         return vocab
 
     def make_char2ind_mapping(self, vocab):
@@ -366,6 +371,9 @@ class CharLevelDataset:
         '''
         # TODO: use existing methods to compute constructor instance variables you don't see already below
 
+        self.corpus = self.load(N_reviews=N_reviews)
+        self.vocab = self.make_vocabulary(corpus = self.corpus)
+
         if self.verbose:
             print('Number of unique chars/tokens:', len(self.vocab))
 
@@ -373,13 +381,19 @@ class CharLevelDataset:
         r_train, r_val = make_train_val_split(self.corpus, prop_val=prop_val)
         splits = {'train': r_train, 'val': r_val}
 
+        self.char2ind_map = self.make_char2ind_mapping(self.vocab)
+        self.ind2char_map = self.make_ind2char_mapping(self.vocab)
+
         for split in splits:
             # TODO: Make the sequences for training the recurrent net
+            seqs_x_str, seqs_y_str = self.make_sequences(corpus= splits[split], seq_len = seq_len, seq_overlap = seq_overlap)
 
             if self.verbose:
                 print(f'Number of {split} sequences:', len(seqs_x_str), 'of length', seq_len)
 
             # TODO: Convert char to int code
+            seqs_x_int = self.convert_str2int(seqs_x_str, self.char2ind_map)
+            seqs_y_int = self.convert_str2int(seqs_y_str, self.char2ind_map)
 
             if self.verbose:
                 print(f'  {seqs_x_int.shape=} {seqs_y_int.shape=}')
