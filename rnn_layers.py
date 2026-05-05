@@ -44,6 +44,9 @@ class GRU(layers.Layer):
         self.wts_cand_i2h = None
         self.wts_cand_h2h = None
         self.cand_b = None
+        super().__init__(layer_name=name, activation="tanh", prev_layer_or_block=prev_layer_or_block)
+
+        self.units = units
 
     def has_wts(self):
         '''Returns whether the layer has weights. This is always true so always return... :)'''
@@ -111,7 +114,27 @@ class GRU(layers.Layer):
         4. Use He/Kaiming initialization. See the notes and notebook for refreshers on the gains and the strategy for
         the hidden-to-hidden weights.
         '''
-        pass
+        _, _, H_e = input_shape
+
+        wt_k_tanh = self.get_kaiming_gain()
+        stddev_tanh = tf.math.sqrt(wt_k_tanh/H_e)
+        stddev_sigmoid = tf.math.sqrt(1/H_e)
+
+        # update gate related wts/bias
+        self.wts_update_i2h = tf.Variable(tf.random.normal(shape=(H_e, self.units), mean=0, stddev=stddev_sigmoid), trainable=True)
+        self.wts_update_h2h = tf.Variable(tf.eye(self.units, self.units), trainable=True)
+        self.update_b = tf.Variable(tf.zeros(shape=(self.units, )), trainable=True)
+
+        # Reset gate related wts/bias
+        self.wts_reset_i2h = tf.Variable(tf.random.normal(shape=(H_e, self.units), mean=0, stddev=stddev_sigmoid), trainable=True)
+        self.wts_reset_h2h = tf.Variable(tf.eye(self.units, self.units), trainable=True)
+        self.reset_b = tf.Variable(tf.zeros(shape=(self.units, )), trainable=True)
+
+        # Candidate gate related wts/bias
+        self.wts_cand_i2h = tf.Variable(tf.random.normal(shape=(H_e, self.units), mean=0, stddev=stddev_tanh), trainable=True)
+        self.wts_cand_h2h = tf.Variable(tf.eye(self.units, self.units), trainable=True)
+        self.cand_b = tf.Variable(tf.zeros(shape=(self.units, )), trainable=True)
+
 
     def get_wts(self):
         '''Return all the weights in the layer in a Python list.
@@ -166,7 +189,14 @@ class GRU(layers.Layer):
         if self.wts_update_i2h is None:
             self.init_params(input_shape=x.shape)
 
-        pass
+
+        u_netIn = x @ self.wts_update_i2h + state @ self.wts_update_h2h + self.update_b
+        
+        r_netIn = x @ self.wts_reset_i2h + state @ self.wts_reset_h2h + self.reset_b
+
+        z_netIn = x @ self.wts_cand_i2h + self.cand_b
+
+        return u_netIn, r_netIn, z_netIn
 
     def compute_net_activation(self, update_gate_in, reset_gate_in, cand_in, state):
         '''Computes the state and net activation of the GRU Layer for the current time step.
@@ -191,7 +221,13 @@ class GRU(layers.Layer):
         tf.float32 tensor. shape=(B, H).
             The reset gate computed for the current time step.
         '''
-        pass
+        u_act = tf.nn.sigmoid(update_gate_in)
+        r_act = tf.nn.sigmoid(reset_gate_in)
+        cand_act = tf.nn.tanh(cand_in + (r_act*state)@self.wts_cand_h2h)
+
+        z_state = (1 - u_act) * state + u_act * cand_act
+
+        return z_state, u_act, r_act
 
     def reset_state(self, B):
         '''Returns the reset/default GRU state of 0s for all neurons.
@@ -206,7 +242,7 @@ class GRU(layers.Layer):
         tf.float32 tensor. shape=(B, H).
             The reset/default GRU state of 0s for all neurons.
         '''
-        pass
+        return tf.Variable(tf.zeros(shape = (B, self.units)), trainable = True)
 
     def __call__(self, x, mask, state=None):
         '''Do a forward pass thru the GRU layer with mini-batch `x`.
@@ -225,10 +261,10 @@ class GRU(layers.Layer):
             Initial state to use when processing the mini-batch. If nothing is passed in (`None`), we start with a
             reset state.
 
-        Returns:
+        Returns:netAct
         --------
         tf.float32 tensor. shape=(B, T, H).
-            The history of states/netAct values at each time step of the mini-batch.
+            The history of states/ values at each time step of the mini-batch.
 
         NOTE:
         1. "Unroll" the input and process the input by the layer sequentially across time.
@@ -240,6 +276,23 @@ class GRU(layers.Layer):
         a Python list by calling the `list` function — e.g. `list(blah)`.
         '''
         B, T, H_prev = x.shape
+
+        if state is None:
+            state = self.reset_state(B)
+
+        u_netIn, r_netIn, z_netIn = self.compute_net_input(x[:, 0, :]*mask[:, 0, :], state)
+
+        z_state, u_act, r_act = self.compute_net_activation(u_netIn, r_netIn, z_netIn, state)
+        all_states = z_state
+        for i in range(1, T):
+            u_netIn, r_netIn, z_netIn = self.compute_net_input(x[:, i, :]*mask[:, i, :], z_state)
+            z_state, u_act, r_act = self.compute_net_activation(u_netIn, r_netIn, z_netIn, z_state)
+            all_states = tf.stack([all_states, z_state], axis = 1)
+
+        if self.output_shape is None:
+            self.output_shape = list(all_states.shape)
+    
+        return all_states
 
 
     def __str__(self):

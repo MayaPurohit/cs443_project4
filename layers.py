@@ -275,6 +275,9 @@ class Layer:
         wt_k = 1
         if self.act_fun_name == "relu":
             wt_k = 2
+        
+        elif self.act_fun_name == "tanh":
+            wt_k = 25/9
 
         return wt_k
 
