@@ -114,7 +114,7 @@ class GRU(layers.Layer):
         4. Use He/Kaiming initialization. See the notes and notebook for refreshers on the gains and the strategy for
         the hidden-to-hidden weights.
         '''
-        _, _, H_e = input_shape
+        H_e = input_shape[-1]
 
         wt_k_tanh = self.get_kaiming_gain()
         stddev_tanh = tf.math.sqrt(wt_k_tanh/H_e)
@@ -242,7 +242,7 @@ class GRU(layers.Layer):
         tf.float32 tensor. shape=(B, H).
             The reset/default GRU state of 0s for all neurons.
         '''
-        return tf.Variable(tf.zeros(shape = (B, self.units)), trainable = True)
+        return tf.zeros(shape = (B, self.units), dtype = tf.float32)
 
     def __call__(self, x, mask, state=None):
         '''Do a forward pass thru the GRU layer with mini-batch `x`.
@@ -279,15 +279,23 @@ class GRU(layers.Layer):
 
         if state is None:
             state = self.reset_state(B)
+        
 
-        u_netIn, r_netIn, z_netIn = self.compute_net_input(x[:, 0, :]*mask[:, 0, :], state)
 
-        z_state, u_act, r_act = self.compute_net_activation(u_netIn, r_netIn, z_netIn, state)
-        all_states = z_state
+
+
+        u_netIn, r_netIn, z_netIn = self.compute_net_input(x[:, 0, :], state)
+        z_state_new, u_act, r_act = self.compute_net_activation(u_netIn, r_netIn, z_netIn, state)
+        z_state = mask[:, 0, :] * z_state_new + (1 - mask[:, 0, :]) * state
+        all_states = [z_state]
         for i in range(1, T):
-            u_netIn, r_netIn, z_netIn = self.compute_net_input(x[:, i, :]*mask[:, i, :], z_state)
-            z_state, u_act, r_act = self.compute_net_activation(u_netIn, r_netIn, z_netIn, z_state)
-            all_states = tf.stack([all_states, z_state], axis = 1)
+            u_netIn, r_netIn, z_netIn = self.compute_net_input(x[:, i, :], z_state)
+            z_state_new, u_act, r_act = self.compute_net_activation(u_netIn, r_netIn, z_netIn, z_state)
+            z_state = mask[:, i, :] * z_state_new + (1 - mask[:, i, :]) * z_state
+            all_states.append(z_state)
+        
+        
+        all_states = tf.stack(all_states, axis = 1)
 
         if self.output_shape is None:
             self.output_shape = list(all_states.shape)
